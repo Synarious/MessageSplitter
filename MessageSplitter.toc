@@ -1,7 +1,7 @@
 ## Interface: 120000, 120001, 120005, 120007, 120100, 120105
 ## Title: MessageSplitter
 ## Notes: Movable long-form chat composer with safe message splitting.
-## Author: Orion
+## Author: Synarion | Github: syfusion.com/github.com
 ## Version: 121.10
 ## SavedVariables: MessageSplitterDB
 ## OptionalDeps: ElvUI, Chattynator, VanillaChat, EllemaresUI, totalRP3, MisspelledContinued, Misspelled
