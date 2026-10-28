@@ -102,7 +102,7 @@ function NS.RefreshPreview()
     NS.counter:SetText(#NS.GetDraftText() .. "B / " .. progress .. "p")
     NS.PaintChannel(queue.route)
     NS.UpdateEditorLayout()
-    if not NS.queue then NS.SetStatus("Enter: send") end
+    NS.RefreshSendStatus()
 end
 
 function NS.SaveGeometry(saveSize)
@@ -145,13 +145,13 @@ end
 function NS.UpdateEditorLayout(grow)
     if not NS.coloredText or NS.layoutBusy then return end
     NS.layoutBusy = true
-    local text = NS.editor:GetText()
+    local text = NS.GetDraftText()
     local display = text
     if NS.db.rpColors then
         local formatter = TRP3_API and TRP3_API.chat and TRP3_API.chat.detectEmoteAndOOC
         if formatter then
             local ok, result = pcall(formatter, text, NS.route.type == "EMOTE")
-            if ok and type(result) == "string" then display = result end
+            if ok and NS.ReadableText(result) then display = result end
         else
             local function hex(c)
                 return string.format("|cff%02x%02x%02x", math.floor(c.r*255), math.floor(c.g*255), math.floor(c.b*255))
@@ -199,6 +199,10 @@ function NS.UpdateEditorLayout(grow)
 end
 
 function NS.Open()
+    if InCombatLockdown() then
+        NS.Notify("Combat: draft retained. Press Enter to use normal chat.")
+        return
+    end
     if not NS.db.enabled then
         NS.Notify("Disabled. Use /mse on to re-enable.")
         return
@@ -385,6 +389,7 @@ function NS.CreateComposer()
     caret:SetPoint("TOPLEFT", editor, "TOPLEFT", 0, 0)
     caret:Hide()
     local caretElapsed = 0
+    local restrictionElapsed = 0
     editor:HookScript("OnEditFocusGained", function()
         caretElapsed = 0
         caret:SetAlpha(1)
@@ -392,6 +397,15 @@ function NS.CreateComposer()
     end)
     editor:HookScript("OnEditFocusLost", function() caret:Hide() end)
     editor:HookScript("OnUpdate", function(_, elapsed)
+        restrictionElapsed = restrictionElapsed + elapsed
+        if restrictionElapsed >= 0.25 then
+            restrictionElapsed = 0
+            local restricted = NS.Restricted()
+            if restricted ~= NS.lastRestricted then
+                NS.lastRestricted = restricted
+                NS.RefreshSendStatus()
+            end
+        end
         local visible = NS.db.rpColors and editor:HasFocus()
         caret:SetShown(visible)
         if visible then

@@ -86,8 +86,10 @@ NS.route = {type="PARTY"}
 NS.editor.text = "/testcommand hello"
 NS.RefreshPreview()
 assert(calls == 0, "Command executed while typing")
+NS.DefaultChat = function() end
+NS.Notify = function() end
 NS.SendNext()
-assert(calls == 1 and NS.editor.text == "")
+assert(calls == 0 and NS.editor.text == "/testcommand hello")
 assert(NS.route.type == "PARTY" and #sent == 2)
 NS.editor.text = "/unknowncommand"
 NS.SendNext()
@@ -123,3 +125,21 @@ NS.editor.text = "/w"
 NS.SendNext()
 assert(NS.editor.text == "/w" and #sent == 2, "Incomplete whisper discarded")
 print("Bare channel commands select their route without sending chat")
+
+-- Lockdown must preserve both draft and queue position.
+NS.editor.text = "pending message"
+NS.nextSend = 0
+local before = #sent
+C_ChatInfo.InChatMessagingLockdown = function() return true end
+NS.SendNext()
+assert(#sent == before and NS.editor.text == "pending message")
+NS.queue = {parts={"pending message"}, route={type="PARTY"}, index=1}
+NS.SendNext(true)
+assert(#sent == before and NS.queue.index == 1)
+C_ChatInfo.InChatMessagingLockdown = function() return false end
+NS.CancelQueue()
+-- Formatting failures preserve the original ordinary draft.
+NS.misspelled = {RemoveHighlighting=function() error("formatter failed") end}
+assert(NS.GetDraftText() == "pending message")
+NS.misspelled = nil
+print("Lockdown preserves unsent drafts and queue position")

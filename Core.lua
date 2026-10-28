@@ -16,12 +16,41 @@ function NS.Notify(message)
     DEFAULT_CHAT_FRAME:AddMessage("|cffffd080MessageSplitter:|r " .. message)
 end
 
+function NS.ReadableText(value)
+    return not (issecretvalue and issecretvalue(value)) and type(value) == "string"
+end
+
 function NS.GetDraftText()
     local text = NS.editor:GetText()
+    NS.draftBlocked = not NS.ReadableText(text)
+    if NS.draftBlocked then return NS.lastReadableDraft or "" end
     if NS.misspelled and type(NS.misspelled.RemoveHighlighting) == "function" then
-        return (NS.misspelled:RemoveHighlighting(text))
+        local ok, cleaned = pcall(NS.misspelled.RemoveHighlighting, NS.misspelled, text)
+        if ok and NS.ReadableText(cleaned) then text = cleaned end
     end
+    NS.lastReadableDraft = text
     return text
+end
+
+function NS.RefreshSendStatus()
+    if NS.Restricted() then
+        if NS.timer then NS.timer:Cancel(); NS.timer = nil end
+        NS.SetStatus("Chat restricted: draft retained. Use Default chat.")
+    elseif NS.queue then
+        NS.SetStatus("Enter: next part; edit: rebuild remaining.")
+    else
+        NS.SetStatus("Enter: send")
+    end
+end
+
+function NS.RestoreSubmission()
+    if not NS.lastSubmission then NS.Notify("No submission to restore."); return end
+    if NS.GetDraftText():match("%S") or NS.queue or NS.draftBlocked then
+        NS.Notify("Finish the current draft before restoring a submission."); return
+    end
+    NS.route = NS.lastSubmission.route
+    NS.editor:SetText(NS.lastSubmission.text)
+    NS.Open()
 end
 
 function NS.AttachSpellcheck()
@@ -38,6 +67,8 @@ end
 
 function NS.SaveDraft()
     if NS.db and NS.editor then
+        NS.GetDraftText()
+        if NS.draftBlocked then return end
         NS.db.draft = NS.db.rememberDraft and NS.GetDraftText() or ""
         NS.db.draftRoute = NS.db.rememberDraft and {type=NS.route.type, target=NS.route.target, language=NS.route.language} or nil
     end
@@ -83,6 +114,8 @@ end
 -- Local, channel, and emote messages retain a hardware event for every part.
 local pacedTypes = {GUILD=true, OFFICER=true, PARTY=true, RAID=true, INSTANCE_CHAT=true, WHISPER=true}
 function NS.SendNext(fromTimer)
+    NS.GetDraftText()
+    if NS.draftBlocked then NS.SetStatus("Draft is inaccessible. Use Default chat."); return end
     if not fromTimer and NS.RouteSlashCommand() then return end
     if NS.Restricted() then
         if NS.timer then NS.timer:Cancel(); NS.timer = nil end
@@ -109,11 +142,13 @@ function NS.SendNext(fromTimer)
     local send = C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
     if not send then NS.SetStatus("Chat send API is unavailable."); return end
     -- A successful call only means submitted to the client, not server delivery.
+    local pendingSubmission = {text=NS.GetDraftText(), route={type=route.type, target=route.target, language=route.language}}
     local ok = pcall(send, q.parts[q.index], route.type, route.language, route.target)
     if not ok then
         if NS.timer then NS.timer:Cancel(); NS.timer = nil end
         NS.SetStatus("Send blocked. Draft retained; use Default chat or retry when safe."); return
     end
+    if q.index == 1 then NS.lastSubmission = pendingSubmission end
     NS.nextSend = GetTime() + NS.db.delay
     NS.route = {type=route.type, target=route.target, language=route.language}
     if NS.recipient then
@@ -224,20 +259,17 @@ function NS.RouteSlashCommand()
         return true
     end
     command = command:lower()
+    if (command == "/mse" or command == "/msplit" or command == "/messagesplitter") and args:lower() == "restore" then
+        NS.editor:SetText("")
+        NS.RestoreSubmission()
+        return true
+    end
     local handler
     -- Reload is a built-in command and may not be registered in SlashCmdList.
     if command == "/reload" or command == "/rl" then
         handler = ReloadUI
-    else
-        -- Resolve aliases first: some handlers are supplied lazily by the client.
-        for key, alias in pairs(_G) do
-            if type(key) == "string" and type(alias) == "string"
-                and key:match("^SLASH_") and alias:lower() == command then
-                local name = key:match("^SLASH_(.-)%d+$")
-                local candidate = name and SlashCmdList[name]
-                if type(candidate) == "function" then handler = candidate; break end
-            end
-        end
+    elseif command == "/mse" or command == "/msplit" or command == "/messagesplitter" then
+        handler = SlashCmdList.MESSAGESPLITTER
     end
     if type(handler) == "function" then
         NS.CancelQueue()
@@ -251,7 +283,8 @@ function NS.RouteSlashCommand()
         end
         return true
     end
-    NS.SetStatus("This command requires Default chat, or is unknown.")
+    NS.DefaultChat()
+    NS.Notify("Enter that command in Default chat. Your draft was retained.")
     return true
 end
 
@@ -286,6 +319,9 @@ events:RegisterEvent("ADDON_LOADED")
 events:RegisterEvent("PLAYER_LOGIN")
 events:RegisterEvent("PLAYER_LOGOUT")
 events:RegisterEvent("PLAYER_REGEN_DISABLED")
+events:RegisterEvent("PLAYER_REGEN_ENABLED")
+events:RegisterEvent("PLAYER_ENTERING_WORLD")
+events:RegisterEvent("ENCOUNTER_END")
 events:SetScript("OnEvent", function(_, event, name)
     if event == "ADDON_LOADED" and name == addon then
         MessageSplitterDB = type(MessageSplitterDB) == "table" and MessageSplitterDB or {}
@@ -347,7 +383,11 @@ events:SetScript("OnEvent", function(_, event, name)
         if NS.resizing then NS.SaveGeometry(true); NS.resizing = nil end
         if NS.timer then NS.timer:Cancel(); NS.timer = nil end
         NS.SetStatus("Combat: draft retained. Use Default chat for native messaging.")
-    elseif event == "PLAYER_LOGOUT" then NS.SaveDraft() end
+        -- Hide clears editor focus without clearing its text or pending queue.
+        -- Leave native chat closed until the player's next Enter keypress.
+        NS.frame:Hide()
+    elseif event == "PLAYER_LOGOUT" then NS.SaveDraft()
+    elseif NS.composerReady then NS.RefreshSendStatus() end
 end)
 
 SLASH_MESSAGESPLITTER1 = "/msplit"
@@ -357,6 +397,7 @@ SlashCmdList.MESSAGESPLITTER = function(input)
     input = (input or ""):match("^%s*(.-)%s*$"):lower()
     if input == "on" then NS.SetEnabled(true)
     elseif input == "off" then NS.SetEnabled(false)
+    elseif input == "restore" then NS.RestoreSubmission()
     elseif input == "settings" then NS.OpenSettings()
     elseif input == "reset" then
         NS.db.x, NS.db.y, NS.db.point, NS.db.relativePoint = nil, nil, nil, nil
