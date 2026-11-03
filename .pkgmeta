@@ -1,0 +1,12 @@
+package-as: MessageSplitter
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
+ignore:
+  - tests
+  - .github
+  - .release-tools
+  - .vscode
+  - .gitignore
+  - README.md
+  - CHANGELOG.md

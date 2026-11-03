@@ -4,6 +4,11 @@ CreateFrame = function() return {RegisterEvent=function() end, SetScript=functio
 GetTime = function() return now end
 InCombatLockdown = function() return false end
 C_ChatInfo = {SendChatMessage=function(text) sent[#sent+1] = text end}
+C_Timer = {NewTimer=function(_, callback) return {Cancel=function() end, callback=callback} end}
+UnitGUID = function() return "Player-Test" end
+local function confirm()
+ NS.ConfirmChat("CHAT_MSG_" .. NS.pending.queue.route.type, sent[#sent], "Me-Realm", nil, "Player-Test")
+end
 assert(loadfile("Splitter.lua"))("MessageSplitter", NS)
 assert(loadfile("Core.lua"))("MessageSplitter", NS)
 assert(loadfile("Composer.lua"))("MessageSplitter", NS)
@@ -16,7 +21,7 @@ NS.PaintChannel = function() end
 NS.SetStatus = function() end
 NS.counter = {SetText=function(self, text) self.text = text end}
 local hides = 0
-NS.frame = {Hide=function() hides = hides + 1 end}
+NS.frame = {Hide=function() hides = hides + 1 end, StopMovingOrSizing=function() end}
 NS.editor = {
  text="*wave " .. string.rep("test ", 95) .. "test*",
  GetText=function(self) return self.text end,
@@ -60,10 +65,13 @@ local expected = assert(NS.Prepare()).parts
 NS.RefreshPreview()
 assert(#expected == 2 and NS.counter.text:find("2p",1,true))
 NS.SendNext()
+assert(NS.pending and NS.editor.text == draft, "Unconfirmed send changed the draft")
+confirm()
 assert(#sent == 1 and NS.queue and NS.counter.text:find("1/2p",1,true))
 assert(hides == 0, "Composer closed with pending messages")
 now = 1
 NS.SendNext()
+confirm()
 assert(#sent == 2 and not NS.queue and NS.editor.text == "")
 assert(hides == 1, "Composer did not close after the final message")
 for i,part in ipairs(expected) do

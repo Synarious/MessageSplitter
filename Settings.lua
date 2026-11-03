@@ -12,7 +12,7 @@ function NS.CreateSettings()
     scroll:SetScript("OnSizeChanged", function(_, width) panel:SetWidth(width) end)
     local title = NS.Label(panel, "MessageSplitter", 22)
     title:SetPoint("TOPLEFT", 20, -20)
-    local description = NS.Label(panel, "Long-form chat. Drag the title area; resize from the bottom-right corner.", 13)
+    local description = NS.Label(panel, "Long-form chat. Drag the status badge; resize from the bottom-right corner.", 13)
     description:SetPoint("TOPLEFT", 20, -52)
     local y = -88
     local checks = {}

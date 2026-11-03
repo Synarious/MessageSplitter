@@ -55,6 +55,15 @@ end
 
 function NS.SetStatus(text)
     if NS.status then NS.status:SetText(text or "") end
+    NS.LayoutStatusBadge()
+end
+
+function NS.LayoutStatusBadge()
+    if not NS.info then return end
+    local countWidth = NS.counter:GetStringWidth()
+    local width = math.min(NS.frame:GetWidth() - 8, countWidth + NS.status:GetStringWidth() + 22)
+    NS.info:SetWidth(math.max(100, width))
+    NS.counter:SetWidth(countWidth)
 end
 
 function NS.PaintChannel(route)
@@ -85,7 +94,9 @@ function NS.PaintChannel(route)
         self.wmRoundedBorder:SetColor(border)
     end)
     if NS.scroll then
-        NS.scroll:SetPoint("TOPLEFT", NS.well, "TOPLEFT", NS.channel:GetWidth() + 14, -4)
+        NS.scroll:SetPoint("TOPLEFT", NS.well, "TOPLEFT", NS.channel:GetWidth() + 14,
+            NS.recipient:IsShown() and -26 or -4)
+        NS.recipient:SetPoint("TOPLEFT", NS.well, "TOPLEFT", NS.channel:GetWidth() + 14, -4)
     end
     NS.rail:SetColorTexture(color.r, color.g, color.b, 0.8)
     NS.editor:SetTextColor(color.r, color.g, color.b, NS.db.rpColors and 0 or 1)
@@ -180,17 +191,17 @@ function NS.UpdateEditorLayout(grow)
     -- and padding as the growing text. The first character must not resize us.
     NS.lineMeasure:SetFont(STANDARD_TEXT_FONT, NS.db.fontSize, "")
     local lineHeight = NS.lineMeasure:GetStringHeight()
-    local base = math.max(NS.db.height, lineHeight + 44)
-    -- The viewport has 36 pixels of frame/toolbar padding. Center the first
-    -- line in the baseline height, and keep that inset as multiline text grows.
-    local padding = math.max(0, (base - 36 - lineHeight) / 2)
+    local chrome = NS.recipient:IsShown() and 38 or 16
+    local base = math.max(NS.db.height, lineHeight + chrome + 8)
+    -- Center the first line within the editor, allowing for a whisper recipient.
+    local padding = math.max(0, (base - chrome - lineHeight) / 2)
     NS.editor:SetTextInsets(0, 4, padding, padding)
     NS.coloredText:ClearAllPoints()
     NS.coloredText:SetPoint("TOPLEFT", NS.editor, "TOPLEFT", 0, -padding)
     local contentHeight = NS.coloredText:GetStringHeight() + padding * 2
     if not NS.resizing then
         if grow then
-            NS.frame:SetHeight(math.max(base, math.min(math.max(base, NS.db.maxHeight), contentHeight + 36)))
+            NS.frame:SetHeight(math.max(base, math.min(math.max(base, NS.db.maxHeight), contentHeight + chrome)))
         elseif NS.frame:GetHeight() < base then
             NS.frame:SetHeight(base)
         end
@@ -199,8 +210,8 @@ function NS.UpdateEditorLayout(grow)
 end
 
 function NS.Open()
-    if InCombatLockdown() then
-        NS.Notify("Combat: draft retained. Press Enter to use normal chat.")
+    if NS.Restricted() then
+        NS.Notify("Chat restricted: draft retained. Press Enter to use normal chat.")
         return
     end
     if not NS.db.enabled then
@@ -261,7 +272,7 @@ function NS.CreateComposer()
     f:SetFrameStrata("DIALOG")
     f:SetMovable(true)
     f:SetResizable(true)
-    f:SetResizeBounds(260, 64, 1200, 800)
+    f:SetResizeBounds(260, 44, 1200, 800)
     f:SetClampedToScreen(true)
     f:EnableMouse(true)
     f:RegisterForDrag("LeftButton")
@@ -276,21 +287,46 @@ function NS.CreateComposer()
         if NS.editor then NS.editor:ClearFocus() end
         if NS.timer then NS.timer:Cancel(); NS.timer = nil end
         if NS.menu then NS.menu:Hide() end
+        if NS.tools then NS.tools:Hide() end
         NS.SaveDraft()
     end)
-    local close = NS.Icon(f, "Interface\\AddOns\\MessageSplitter\\Media\\Close.tga",
+    -- One edge tab reveals the controls without reserving an editor row.
+    local tools = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    NS.tools = tools
+    tools:SetSize(106, 24)
+    tools:SetFrameLevel(f:GetFrameLevel() + 25)
+    NS.Skin(tools, {0.085, 0.075, 0.060, 0.96}, {0.62, 0.48, 0.25, 0.65})
+    local toggle = NS.Icon(f, "Interface\\AddOns\\MessageSplitter\\Media\\Settings.tga",
+        "Composer controls", "Hover for send, default chat, disable, settings and close.", function()
+            tools:SetShown(not tools:IsShown())
+        end)
+    toggle:SetPoint("BOTTOMRIGHT", f, "TOPRIGHT", -1, -1)
+    toggle:SetFrameLevel(tools:GetFrameLevel())
+    tools:SetPoint("BOTTOMRIGHT", toggle, "BOTTOMLEFT", 0, 0)
+    toggle:HookScript("OnEnter", function() tools:Show() end)
+    local away = 0
+    tools:SetScript("OnShow", function() away = 0 end)
+    tools:SetScript("OnUpdate", function(_, elapsed)
+        if toggle:IsMouseOver() or tools:IsMouseOver() then away = 0
+        else
+            away = away + elapsed
+            if away >= 0.2 then tools:Hide() end
+        end
+    end)
+    tools:Hide()
+    local close = NS.Icon(tools, "Interface\\AddOns\\MessageSplitter\\Media\\Close.tga",
         "Close", "Keep draft; Escape also closes.", function() f:Hide() end)
-    close:SetPoint("TOPRIGHT", -4, -3)
-    local settings = NS.Icon(f, "Interface\\AddOns\\MessageSplitter\\Media\\Settings.tga",
+    close:SetPoint("RIGHT", -4, 0)
+    local settings = NS.Icon(tools, "Interface\\AddOns\\MessageSplitter\\Media\\Settings.tga",
         "Settings", nil, NS.OpenSettings)
     settings:SetPoint("RIGHT", close, "LEFT", -2, 0)
-    local disable = NS.Icon(f, "Interface\\AddOns\\MessageSplitter\\Media\\Power.tga",
+    local disable = NS.Icon(tools, "Interface\\AddOns\\MessageSplitter\\Media\\Power.tga",
         "Disable MessageSplitter", "Re-enable with /mse on", function() NS.SetEnabled(false) end)
     disable:SetPoint("RIGHT", settings, "LEFT", -2, 0)
-    local native = NS.Icon(f, "Interface\\AddOns\\MessageSplitter\\Media\\Chat.tga",
+    local native = NS.Icon(tools, "Interface\\AddOns\\MessageSplitter\\Media\\Chat.tga",
         "Default chat", "Open Blizzard's chat box; keep this draft.", NS.DefaultChat)
     native:SetPoint("RIGHT", disable, "LEFT", -2, 0)
-    local send = NS.Icon(f, "Interface\\AddOns\\MessageSplitter\\Media\\Send.tga",
+    local send = NS.Icon(tools, "Interface\\AddOns\\MessageSplitter\\Media\\Send.tga",
         "Send / next part", "Enter: send | Shift+Enter: new line", function()
             NS.SendNext()
             if f:IsShown() then NS.editor:SetFocus() end
@@ -317,8 +353,6 @@ function NS.CreateComposer()
     NS.Tooltip(NS.channel, "MessageSplitter: channel", "Choose the channel for this message.")
     NS.recipient = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
     NS.recipient:SetHeight(18)
-    NS.recipient:SetPoint("TOPLEFT", f, "TOPLEFT", 12, -3)
-    NS.recipient:SetPoint("RIGHT", send, "LEFT", -6, 0)
     NS.recipient:SetAutoFocus(false)
     NS.recipient:SetMaxLetters(80)
     NS.recipient:SetScript("OnTextChanged", function(self)
@@ -333,13 +367,21 @@ function NS.CreateComposer()
 
     local well = CreateFrame("Frame", nil, f, "BackdropTemplate")
     NS.well = well
-    well:SetPoint("TOPLEFT", 4, -24)
+    well:SetPoint("TOPLEFT", 4, -4)
     well:SetPoint("BOTTOMRIGHT", -4, 4)
     well:SetBackdrop(backdrop)
     well:SetBackdropColor(0.025, 0.03, 0.04, 0.9)
     well:SetBackdropBorderColor(0.19, 0.2, 0.23, 1)
     NS.channel:SetParent(well)
     NS.channel:SetPoint("LEFT", well, "LEFT", 8, 0)
+    NS.recipient:SetParent(well)
+    NS.recipient:SetPoint("TOPLEFT", well, "TOPLEFT", NS.channel:GetWidth() + 14, -4)
+    NS.recipient:SetPoint("RIGHT", well, "RIGHT", -6, 0)
+    local function recipientLayout()
+        if NS.composerReady then NS.PaintChannel(); NS.UpdateEditorLayout(true) end
+    end
+    NS.recipient:HookScript("OnShow", recipientLayout)
+    NS.recipient:HookScript("OnHide", recipientLayout)
     NS.rail = well:CreateTexture(nil, "OVERLAY")
     NS.rail:SetPoint("TOPLEFT")
     NS.rail:SetPoint("BOTTOMLEFT")
@@ -403,7 +445,8 @@ function NS.CreateComposer()
             local restricted = NS.Restricted()
             if restricted ~= NS.lastRestricted then
                 NS.lastRestricted = restricted
-                NS.RefreshSendStatus()
+                if restricted then NS.PauseForRestrictions()
+                else NS.RefreshSendStatus() end
             end
         end
         local visible = NS.db.rpColors and editor:HasFocus()
@@ -458,27 +501,24 @@ function NS.CreateComposer()
     well:EnableMouse(true)
 
     NS.counter = NS.Label(f, "", 10)
-    local info = CreateFrame("Frame", nil, f)
-    info:SetPoint("TOPLEFT", f, "TOPLEFT", 8, -3)
-    info:SetPoint("RIGHT", send, "LEFT", -6, 0)
-    info:SetHeight(18)
+    local info = CreateFrame("Frame", nil, f, "BackdropTemplate")
+    NS.info = info
+    info:SetPoint("TOPRIGHT", f, "BOTTOMRIGHT", -1, 1)
+    info:SetSize(180, 18)
+    NS.Skin(info, {0.085, 0.075, 0.060, 0.96}, {0.62, 0.48, 0.25, 0.48})
     NS.counter:SetParent(info)
-    NS.counter:SetPoint("LEFT", info, "LEFT", 0, 0)
+    NS.counter:SetPoint("LEFT", info, "LEFT", 6, 0)
     NS.counter:SetWidth(62)
     NS.counter:SetWordWrap(false)
     NS.status = NS.Label(f, "", 10)
     NS.status:SetParent(info)
-    NS.status:SetPoint("LEFT", NS.counter, "RIGHT", 4, 0)
-    NS.status:SetPoint("RIGHT", info, "RIGHT", 0, 0)
+    NS.status:SetPoint("LEFT", NS.counter, "RIGHT", 10, 0)
+    NS.status:SetPoint("RIGHT", info, "RIGHT", -6, 0)
     NS.status:SetWordWrap(false)
-    -- The whisper recipient uses this same toolbar space while it is visible.
-    NS.recipient:HookScript("OnShow", function() info:Hide() end)
-    NS.recipient:HookScript("OnHide", function() info:Show() end)
-    info:SetShown(not NS.recipient:IsShown())
     local statusHover = CreateFrame("Frame", nil, info)
     statusHover:SetAllPoints(info)
     statusHover:EnableMouse(true)
-    -- This mouse-enabled tooltip area covers the toolbar's drag surface.
+    -- The attached status badge doubles as a drag handle.
     statusHover:RegisterForDrag("LeftButton")
     statusHover:SetScript("OnDragStart", f:GetScript("OnDragStart"))
     statusHover:SetScript("OnDragStop", f:GetScript("OnDragStop"))
@@ -513,6 +553,7 @@ function NS.CreateComposer()
     NS.menu:SetFrameLevel(f:GetFrameLevel() + 20)
     NS.menu.rows = {}
     NS.menu:Hide()
+    f:SetScript("OnSizeChanged", NS.LayoutStatusBadge)
     NS.ApplyStyle()
     NS.composerReady = true
     editor:SetText(NS.db.rememberDraft and NS.db.draft or "")
