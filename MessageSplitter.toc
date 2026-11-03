@@ -2,7 +2,7 @@
 ## Title: MessageSplitter
 ## Notes: Movable long-form chat composer with safe message splitting.
 ## Author: Synarion | Github: syfusion.com/github.com
-## Version: 121.10
+## Version: 121.11
 ## SavedVariables: MessageSplitterDB
 ## OptionalDeps: ElvUI, Chattynator, VanillaChat, EllemaresUI, totalRP3, MisspelledContinued, Misspelled
 
